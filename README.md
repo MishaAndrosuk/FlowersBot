@@ -126,13 +126,37 @@ journalctl -u kvity-bot -f     # логи
 
 ### Варіант Б — Docker
 
+На сервері потрібні Docker і плагін Compose (`curl -fsSL https://get.docker.com | sh`).
+
 ```bash
+# скопіюйте файли проєкту на сервер (git clone / scp), потім:
+cd kvity-bot
 cp .env.example .env && nano .env
+
+# папка для бази: контейнер працює не від root (UID 1000), тож віддаємо її цьому користувачу
+mkdir -p data && sudo chown 1000:1000 data
+
 docker compose up -d --build
 docker compose logs -f
 ```
 
-База зберігається в папці `./data` на хості і не зникає при перезапуску контейнера.
+База лежить у `./data/ads.db` на хості й переживає перезапуск і перезбірку контейнера.
+`DB_PATH` у `.env` для Docker ігнорується: compose завжди задає `/app/data/ads.db`.
+
+Щоб перенести наявну базу, зупиніть бота локально й скопіюйте **всі три** файли
+(`ads.db`, `ads.db-wal`, `ads.db-shm`, якщо вони є) у `data/` на сервері перед першим запуском.
+
+Корисні команди:
+
+```bash
+docker compose restart                 # перезапуск (після зміни .env)
+git pull && docker compose up -d --build   # оновлення коду
+docker compose down                    # зупинка
+```
+
+Контейнер працює за київським часом (`TZ=Europe/Kyiv`), логи обмежено до 3 файлів по 10 МБ.
+Не запускайте одночасно двох ботів з однаковим `BOT_TOKEN` (наприклад, локально й на сервері):
+Telegram віддаватиме помилку `Conflict`.
 
 ## Як працює бот
 

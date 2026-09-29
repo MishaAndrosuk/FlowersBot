@@ -4,7 +4,13 @@
 *.db-shm
 data/
 __pycache__/
+*.pyc
 .venv/
 venv/
 .git/
+.gitignore
 .claude/
+.dockerignore
+Dockerfile
+docker-compose.yml
+README.md

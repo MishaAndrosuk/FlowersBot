@@ -1,10 +1,22 @@
+name: kvity-bot
+
 services:
   bot:
     build: .
+    image: kvity-bot:latest
     container_name: kvity-bot
     restart: unless-stopped
     env_file: .env
     environment:
+      # перекриває DB_PATH з .env — база завжди лежить у змонтованій папці
       DB_PATH: /app/data/ads.db
+      TZ: Europe/Kyiv
     volumes:
       - ./data:/app/data
+    # час, щоб бот коректно закрив базу при docker compose down / restart
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
