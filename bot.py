@@ -22,6 +22,7 @@ USER_COMMANDS = [
 ]
 ADMIN_COMMANDS = USER_COMMANDS + [
     BotCommand(command="pending", description="Оголошення на перевірці"),
+    BotCommand(command="sold", description="Позначити оголошення проданим: /sold <id>"),
 ]
 
 

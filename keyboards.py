@@ -17,9 +17,14 @@ class ModerationCb(CallbackData, prefix="mod"):
     ad_id: int
 
 
+class SoldCb(CallbackData, prefix="sold"):
+    action: str  # ask / yes / no
+    ad_id: int
+
+
 def main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=texts.BTN_NEW_AD)]],
+        keyboard=[[KeyboardButton(text=texts.BTN_NEW_AD), KeyboardButton(text=texts.BTN_MY_ADS)]],
         resize_keyboard=True,
         is_persistent=True,
     )
@@ -64,6 +69,23 @@ def moderation_kb(ad_id: int) -> InlineKeyboardMarkup:
                     text=texts.BTN_REJECT,
                     callback_data=ModerationCb(action="reject", ad_id=ad_id).pack(),
                 ),
+            ]
+        ]
+    )
+
+
+def sold_kb(ad_id: int, text: str = texts.BTN_SOLD) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=text, callback_data=SoldCb(action="ask", ad_id=ad_id).pack())]]
+    )
+
+
+def sold_confirm_kb(ad_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=texts.BTN_YES, callback_data=SoldCb(action="yes", ad_id=ad_id).pack()),
+                InlineKeyboardButton(text=texts.BTN_NO, callback_data=SoldCb(action="no", ad_id=ad_id).pack()),
             ]
         ]
     )

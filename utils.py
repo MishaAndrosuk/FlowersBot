@@ -1,6 +1,7 @@
 import re
 from html import escape, unescape
 
+import texts
 from db import Ad
 
 CAPTION_LIMIT = 1024
@@ -49,26 +50,35 @@ def tg_length(html_text: str) -> int:
     return len(visible.encode("utf-16-le")) // 2
 
 
-def _render_caption(title: str, ad: Ad, invite_link: str, bot_link: str) -> str:
+def _render_caption(title: str, ad: Ad, invite_link: str, bot_link: str, sold: bool) -> str:
+    if sold:
+        header = texts.POST_SOLD_HEADER
+        price = texts.POST_SOLD_PRICE
+        contact = ""
+    else:
+        header = ""
+        price = f"{format_price(ad.price)} грн (коштує {format_price(ad.old_price)} грн)"
+        contact = f"👤 КОНТАКТ: {escape(ad.contact)}\n"
     return (
+        f"{header}"
         f"<b>{escape(title)}</b>\n\n"
-        f"💰 ЦІНА: {format_price(ad.price)} грн (коштує {format_price(ad.old_price)} грн)\n"
+        f"💰 ЦІНА: {price}\n"
         f"⏰ ОТРИМАНО: {escape(ad.received_at)}\n"
         f"📍 АДРЕСА: {escape(ad.address)}\n"
-        f"👤 КОНТАКТ: {escape(ad.contact)}\n\n"
+        f"{contact}\n"
         f'📢 <a href="{escape(invite_link, quote=True)}">Підписатися</a> | '
         f'📩 <a href="{escape(bot_link, quote=True)}">Розмістити оголошення</a>'
     )
 
 
-def build_caption(ad: Ad, invite_link: str, bot_link: str) -> str:
-    """Формує підпис поста; якщо він довший за ліміт Telegram — обрізає опис."""
+def build_caption(ad: Ad, invite_link: str, bot_link: str, sold: bool = False) -> str:
+    """Формує підпис поста (sold=True — варіант «продано»); якщо він довший за ліміт Telegram — обрізає опис."""
     title = ad.title
-    caption = _render_caption(title, ad, invite_link, bot_link)
+    caption = _render_caption(title, ad, invite_link, bot_link, sold)
     while tg_length(caption) > CAPTION_LIMIT and title:
         overflow = tg_length(caption) - CAPTION_LIMIT
         title = title[: max(0, len(title) - overflow - 1)].rstrip()
-        caption = _render_caption(f"{title}…" if title else "…", ad, invite_link, bot_link)
+        caption = _render_caption(f"{title}…" if title else "…", ad, invite_link, bot_link, sold)
     return caption
 
 

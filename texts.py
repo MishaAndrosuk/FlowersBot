@@ -10,6 +10,11 @@ BTN_USE_USERNAME = "Використати @{username}"
 BTN_PUBLISH = "✅ Опублікувати"
 BTN_REJECT = "❌ Відхилити"
 BTN_SHOW_AD = "Відкрити №{ad_id}"
+BTN_MY_ADS = "📋 Мої оголошення"
+BTN_BOUQUET_SOLD = "✅ Букет продано"
+BTN_SOLD = "✅ Продано"
+BTN_YES = "Так"
+BTN_NO = "Ні"
 
 # ---------- Загальні ----------
 WELCOME = (
@@ -126,8 +131,28 @@ RECEIPT_ACCEPTED = (
 # ---------- Повідомлення автору ----------
 AD_PUBLISHED = "Ваше оголошення опубліковано! 🌸"
 AD_PUBLISHED_LINK = '\n<a href="{link}">Переглянути пост</a>'
+AD_PUBLISHED_SOLD_HINT = "\n\nКоли букет продасте — натисніть кнопку нижче."
 AD_REJECTED = "На жаль, ваше оголошення відхилено."
 AD_REJECTED_REASON = "\nПричина: {reason}"
+
+# ---------- Мої оголошення / продано ----------
+MY_ADS_EMPTY = "У вас немає активних оголошень."
+MY_ADS_HEADER = "📋 <b>Ваші активні оголошення: {count}</b>"
+MY_ADS_MORE = "…та ще {count}. Спочатку позначте продані з наведених вище."
+MY_ADS_ITEM = "🌸 <b>{title}</b>\n💰 {price} грн"
+
+SOLD_CONFIRM = "🌸 <b>{title}</b>\n\nПозначити букет як проданий? Цю дію не можна скасувати."
+SOLD_CANCELLED = "Добре, оголошення залишається активним."
+SOLD_DONE = "✅ Готово! Оголошення позначено як продане."
+SOLD_POST_NOT_FOUND = "\n\n⚠️ Пост у каналі не знайдено (можливо, його видалено)."
+SOLD_ALREADY = "Вже позначено як продане"
+SOLD_FORBIDDEN = "Це не ваше оголошення."
+SOLD_NOT_PUBLISHED = "Оголошення не опубліковане (статус: {status})."
+SOLD_EDIT_FAILED = "Не вдалося оновити пост, спробуйте пізніше"
+
+# Підпис проданого поста в каналі
+POST_SOLD_HEADER = "🔴 ПРОДАНО\n"
+POST_SOLD_PRICE = "✅ ПРОДАНО"
 
 # ---------- Адмін ----------
 ADMIN_NEW_AD = "🆕 <b>Нове оголошення на перевірку</b>\n\n"
@@ -144,6 +169,8 @@ ADMIN_STATUS_PUBLISHED = "\n\n✅ Опубліковано (адмін {admin})"
 ADMIN_STATUS_REJECTED = "\n\n❌ Відхилено (адмін {admin})"
 ADMIN_STATUS_REASON = "\nПричина: {reason}"
 ADMIN_STATUS_OTHER = "\n\nℹ️ Статус: {status}"
+ADMIN_STATUS_SOLD = "\n\n🔴 Продано (позначив {who})"
+ADMIN_SOLD_USAGE = "Використання: <code>/sold &lt;id&gt;</code>, наприклад <code>/sold 12</code>"
 
 ADMIN_ALREADY_PROCESSED = "Оголошення вже оброблено (статус: {status})."
 ADMIN_AD_NOT_FOUND = "Оголошення не знайдено."
@@ -174,4 +201,5 @@ STATUS_NAMES = {
     "pending_review": "на перевірці",
     "published": "опубліковано",
     "rejected": "відхилено",
+    "sold": "продано",
 }

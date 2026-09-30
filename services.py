@@ -6,12 +6,12 @@ from html import escape
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
-from aiogram.types import InputMediaPhoto, Message
+from aiogram.types import InlineKeyboardMarkup, InputMediaPhoto, Message, User
 
 import texts
 from config import Config
-from db import STATUS_PENDING_REVIEW, Ad, Database
-from keyboards import moderation_kb
+from db import STATUS_PENDING_REVIEW, STATUS_PUBLISHED, STATUS_SOLD, Ad, Database
+from keyboards import moderation_kb, sold_kb
 from utils import build_caption, user_display
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ def ad_lock(ad_id: int) -> asyncio.Lock:
 
 async def send_ad_media(bot: Bot, chat_id: int | str, ad: Ad, config: Config) -> list[Message]:
     """Надсилає оголошення: одне фото — send_photo, кілька — альбом з підписом на першому фото."""
-    caption = build_caption(ad, config.channel_invite_link, config.bot_link)
+    caption = build_caption(ad, config.channel_invite_link, config.bot_link, sold=ad.status == STATUS_SOLD)
     if len(ad.photos) == 1:
         message = await bot.send_photo(chat_id, ad.photos[0], caption=caption)
         return [message]
@@ -75,7 +75,8 @@ async def send_ad_to_admin(bot: Bot, db: Database, config: Config, admin_id: int
         )
         await db.add_moderation_message(ad.id, admin_id, info.message_id)
     else:
-        await bot.send_message(admin_id, admin_ad_info(ad) + admin_status_line(ad))
+        markup = sold_kb(ad.id) if ad.status == STATUS_PUBLISHED else None
+        await bot.send_message(admin_id, admin_ad_info(ad) + admin_status_line(ad), reply_markup=markup)
 
 
 async def notify_admins(bot: Bot, db: Database, config: Config, ad: Ad) -> None:
@@ -86,12 +87,14 @@ async def notify_admins(bot: Bot, db: Database, config: Config, ad: Ad) -> None:
             logger.warning("Не вдалося надіслати оголошення №%s адміну %s: %s", ad.id, admin_id, error)
 
 
-async def update_moderation_messages(bot: Bot, db: Database, ad: Ad, status_text: str) -> None:
-    """Оновлює картки оголошення в усіх адмінів: додає статус і прибирає кнопки."""
+async def update_moderation_messages(
+    bot: Bot, db: Database, ad: Ad, status_text: str, reply_markup: InlineKeyboardMarkup | None = None
+) -> None:
+    """Оновлює картки оголошення в усіх адмінів: додає статус і замінює кнопки (за замовчуванням — прибирає)."""
     text = texts.ADMIN_NEW_AD + admin_ad_info(ad) + status_text
     for chat_id, message_id in await db.get_moderation_messages(ad.id):
         try:
-            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=None)
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=reply_markup)
         except TelegramBadRequest as error:
             logger.debug("Не вдалося оновити повідомлення модерації %s/%s: %s", chat_id, message_id, error)
         except TelegramAPIError as error:
@@ -102,6 +105,64 @@ async def publish_to_channel(bot: Bot, config: Config, ad: Ad) -> int:
     """Публікує пост у канал і повертає message_id першого повідомлення."""
     messages = await send_ad_media(bot, config.channel_id, ad, config)
     return messages[0].message_id
+
+
+# Результати mark_ad_sold
+SOLD_OK = "ok"
+SOLD_POST_MISSING = "post_missing"  # статус змінено, але пост у каналі не знайдено
+SOLD_ALREADY = "already"
+SOLD_NOT_FOUND = "not_found"
+SOLD_NOT_PUBLISHED = "not_published"
+SOLD_EDIT_FAILED = "edit_failed"  # статус НЕ змінено
+
+_POST_MISSING_ERRORS = ("message to edit not found", "message_id_invalid")
+
+
+def can_mark_sold(user_id: int, ad: Ad, config: Config) -> bool:
+    return user_id == ad.user_id or user_id in config.admin_ids
+
+
+async def mark_ad_sold(bot: Bot, db: Database, config: Config, ad_id: int, actor: User) -> str:
+    """Редагує підпис поста в каналі на «продано» і лише після цього змінює статус у БД."""
+    async with ad_lock(ad_id):
+        ad = await db.get_ad(ad_id)
+        if ad is None:
+            return SOLD_NOT_FOUND
+        if ad.status == STATUS_SOLD:
+            return SOLD_ALREADY
+        if ad.status != STATUS_PUBLISHED:
+            return SOLD_NOT_PUBLISHED
+
+        result = SOLD_OK
+        if ad.channel_message_id is None:
+            result = SOLD_POST_MISSING
+        else:
+            caption = build_caption(ad, config.channel_invite_link, config.bot_link, sold=True)
+            try:
+                await bot.edit_message_caption(
+                    chat_id=config.channel_id, message_id=ad.channel_message_id, caption=caption
+                )
+            except TelegramBadRequest as error:
+                message = error.message.lower()
+                if "message is not modified" in message:
+                    pass
+                elif any(marker in message for marker in _POST_MISSING_ERRORS):
+                    logger.warning("Пост оголошення №%s не знайдено в каналі: %s", ad_id, error)
+                    result = SOLD_POST_MISSING
+                else:
+                    logger.error("Не вдалося позначити пост оголошення №%s як проданий: %s", ad_id, error)
+                    return SOLD_EDIT_FAILED
+            except TelegramAPIError as error:
+                logger.error("Не вдалося позначити пост оголошення №%s як проданий: %s", ad_id, error)
+                return SOLD_EDIT_FAILED
+
+        if not await db.mark_sold(ad_id):
+            return SOLD_ALREADY
+        ad = await db.get_ad(ad_id)
+
+    logger.info("Оголошення №%s позначено як продане користувачем %s", ad_id, actor.id)
+    await update_moderation_messages(bot, db, ad, texts.ADMIN_STATUS_SOLD.format(who=admin_mention(actor)))
+    return result
 
 
 async def build_post_link(bot: Bot, channel_id: int | str, message_id: int) -> str | None:

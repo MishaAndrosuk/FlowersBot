@@ -12,16 +12,30 @@ from aiogram.types import CallbackQuery, Message, User
 
 import texts
 from config import Config
-from db import Database
+from db import STATUS_PUBLISHED, STATUS_SOLD, Database
 from keyboards import (
     PHOTOS_DONE_CB,
     USE_USERNAME_CB,
+    SoldCb,
     cancel_kb,
     main_kb,
     photos_done_kb,
+    sold_confirm_kb,
+    sold_kb,
     use_username_kb,
 )
-from services import notify_admins, send_ad_media
+from services import (
+    SOLD_ALREADY,
+    SOLD_NOT_FOUND,
+    SOLD_NOT_PUBLISHED,
+    SOLD_OK,
+    SOLD_POST_MISSING,
+    build_post_link,
+    can_mark_sold,
+    mark_ad_sold,
+    notify_admins,
+    send_ad_media,
+)
 from states import AdForm
 from utils import format_price, normalize_nick, parse_price
 
@@ -35,6 +49,7 @@ ALBUM_COLLECT_DELAY = 1.2  # секунд очікування решти фот
 TITLE_MAX_LEN = 200
 ADDRESS_MAX_LEN = 200
 RECEIVED_MAX_LEN = 100
+MY_ADS_LIMIT = 20
 
 # Буфер фото з альбомів: (chat_id, media_group_id) -> список file_id
 _album_buffer: dict[tuple[int, str], list[str]] = {}
@@ -83,6 +98,103 @@ async def start_form(message: Message, state: FSMContext, bot: Bot) -> None:
         await state.set_state(AdForm.photos)
         await state.update_data(photos=[])
     await message.answer(texts.STEP_1_PHOTOS, reply_markup=cancel_kb())
+
+
+# ---------------------------------------------------------------- мої оголошення / продано
+
+@router.message(StateFilter("*"), F.text == texts.BTN_MY_ADS)
+async def my_ads(message: Message, bot: Bot, db: Database, config: Config) -> None:
+    ads = await db.list_user_ads(message.from_user.id, STATUS_PUBLISHED)
+    if not ads:
+        await message.answer(texts.MY_ADS_EMPTY)
+        return
+
+    await message.answer(texts.MY_ADS_HEADER.format(count=len(ads)))
+    for ad in ads[:MY_ADS_LIMIT]:
+        title = ad.title if len(ad.title) <= 100 else ad.title[:99] + "…"
+        text = texts.MY_ADS_ITEM.format(title=escape(title), price=format_price(ad.price))
+        link = await build_post_link(bot, config.channel_id, ad.channel_message_id) if ad.channel_message_id else None
+        if link:
+            text += texts.AD_PUBLISHED_LINK.format(link=escape(link, quote=True))
+        await message.answer(text, reply_markup=sold_kb(ad.id))
+    if len(ads) > MY_ADS_LIMIT:
+        await message.answer(texts.MY_ADS_MORE.format(count=len(ads) - MY_ADS_LIMIT))
+
+
+# Спільні для автора й адмінів: адмінський роутер SoldCb не обробляє, тож колбеки доходять сюди.
+@router.callback_query(SoldCb.filter(F.action == "ask"))
+async def sold_ask(callback: CallbackQuery, callback_data: SoldCb, bot: Bot, db: Database, config: Config) -> None:
+    ad = await db.get_ad(callback_data.ad_id)
+    if ad is None:
+        await callback.answer(texts.ADMIN_AD_NOT_FOUND, show_alert=True)
+        return
+    if not can_mark_sold(callback.from_user.id, ad, config):
+        await callback.answer(texts.SOLD_FORBIDDEN, show_alert=True)
+        return
+    if ad.status == STATUS_SOLD:
+        await callback.answer(texts.SOLD_ALREADY, show_alert=True)
+        if callback.message:
+            await _remove_markup(bot, callback.message.chat.id, callback.message.message_id)
+        return
+    if ad.status != STATUS_PUBLISHED:
+        status = texts.STATUS_NAMES.get(ad.status, ad.status)
+        await callback.answer(texts.SOLD_NOT_PUBLISHED.format(status=status), show_alert=True)
+        return
+
+    await callback.answer()
+    await bot.send_message(
+        callback.from_user.id,
+        texts.SOLD_CONFIRM.format(title=escape(ad.title)),
+        reply_markup=sold_confirm_kb(ad.id),
+    )
+
+
+@router.callback_query(SoldCb.filter(F.action == "no"))
+async def sold_no(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if callback.message:
+        try:
+            await callback.message.edit_text(texts.SOLD_CANCELLED, reply_markup=None)
+        except TelegramBadRequest:
+            pass
+
+
+@router.callback_query(SoldCb.filter(F.action == "yes"))
+async def sold_yes(callback: CallbackQuery, callback_data: SoldCb, bot: Bot, db: Database, config: Config) -> None:
+    ad = await db.get_ad(callback_data.ad_id)
+    if ad is None:
+        await callback.answer(texts.ADMIN_AD_NOT_FOUND, show_alert=True)
+        return
+    if not can_mark_sold(callback.from_user.id, ad, config):
+        await callback.answer(texts.SOLD_FORBIDDEN, show_alert=True)
+        return
+
+    result = await mark_ad_sold(bot, db, config, ad.id, callback.from_user)
+
+    if result == SOLD_ALREADY:
+        await callback.answer(texts.SOLD_ALREADY)
+        return
+    if result == SOLD_NOT_FOUND:
+        await callback.answer(texts.ADMIN_AD_NOT_FOUND, show_alert=True)
+        return
+    if result == SOLD_NOT_PUBLISHED:
+        ad = await db.get_ad(ad.id)
+        status = texts.STATUS_NAMES.get(ad.status, ad.status) if ad else "—"
+        await callback.answer(texts.SOLD_NOT_PUBLISHED.format(status=status), show_alert=True)
+        return
+    if result not in (SOLD_OK, SOLD_POST_MISSING):  # SOLD_EDIT_FAILED — статус не змінено, кнопки лишаємо
+        await callback.answer(texts.SOLD_EDIT_FAILED, show_alert=True)
+        return
+
+    await callback.answer()
+    text = texts.SOLD_DONE
+    if result == SOLD_POST_MISSING:
+        text += texts.SOLD_POST_NOT_FOUND
+    if callback.message:
+        try:
+            await callback.message.edit_text(text, reply_markup=None)
+        except TelegramBadRequest:
+            pass
 
 
 # ---------------------------------------------------------------- крок 1: фото

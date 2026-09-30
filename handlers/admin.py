@@ -4,15 +4,15 @@ from html import escape
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 import texts
 from config import Config
-from db import STATUS_PENDING_REVIEW, Database
+from db import STATUS_PENDING_REVIEW, STATUS_PUBLISHED, STATUS_SOLD, Database
 from filters import IsAdmin
-from keyboards import ModerationCb, cancel_kb, main_kb, pending_list_kb
+from keyboards import ModerationCb, cancel_kb, main_kb, pending_list_kb, sold_confirm_kb, sold_kb
 from services import (
     ad_lock,
     admin_mention,
@@ -34,11 +34,11 @@ PENDING_LIST_LIMIT = 30
 REJECT_REASON_MAX_LEN = 500
 
 
-async def _drop_markup(callback: CallbackQuery) -> None:
+async def _drop_markup(callback: CallbackQuery, reply_markup: InlineKeyboardMarkup | None = None) -> None:
     if callback.message is None:
         return
     try:
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.edit_reply_markup(reply_markup=reply_markup)
     except (TelegramBadRequest, AttributeError):
         pass
 
@@ -120,16 +120,47 @@ async def cb_publish(callback: CallbackQuery, callback_data: ModerationCb, bot: 
     author_text = texts.AD_PUBLISHED
     if link:
         author_text += texts.AD_PUBLISHED_LINK.format(link=escape(link, quote=True))
+    author_text += texts.AD_PUBLISHED_SOLD_HINT
     try:
-        await bot.send_message(ad.user_id, author_text, reply_markup=main_kb())
+        await bot.send_message(ad.user_id, author_text, reply_markup=sold_kb(ad_id, texts.BTN_BOUQUET_SOLD))
     except TelegramAPIError as error:
         logger.warning("Не вдалося сповістити автора оголошення №%s: %s", ad_id, error)
         await bot.send_message(callback.from_user.id, texts.ADMIN_NOTIFY_USER_FAILED)
 
     await update_moderation_messages(
-        bot, db, ad, texts.ADMIN_STATUS_PUBLISHED.format(admin=admin_mention(callback.from_user))
+        bot,
+        db,
+        ad,
+        texts.ADMIN_STATUS_PUBLISHED.format(admin=admin_mention(callback.from_user)),
+        reply_markup=sold_kb(ad_id),
     )
-    await _drop_markup(callback)
+    await _drop_markup(callback, sold_kb(ad_id))
+
+
+# ---------------------------------------------------------------- /sold <id>
+# Підтвердження («Так»/«Ні») обробляє спільний хендлер у handlers/user.py.
+
+@router.message(Command("sold"))
+async def cmd_sold(message: Message, command: CommandObject, db: Database) -> None:
+    raw = (command.args or "").strip().lstrip("№#")
+    if not raw.isdigit():
+        await message.answer(texts.ADMIN_SOLD_USAGE)
+        return
+    ad = await db.get_ad(int(raw))
+    if ad is None:
+        await message.answer(texts.ADMIN_AD_NOT_FOUND)
+        return
+    if ad.status == STATUS_SOLD:
+        await message.answer(texts.SOLD_ALREADY)
+        return
+    if ad.status != STATUS_PUBLISHED:
+        status = texts.STATUS_NAMES.get(ad.status, ad.status)
+        await message.answer(texts.SOLD_NOT_PUBLISHED.format(status=status))
+        return
+    await message.answer(
+        f"<b>№{ad.id}</b> " + texts.SOLD_CONFIRM.format(title=escape(ad.title)),
+        reply_markup=sold_confirm_kb(ad.id),
+    )
 
 
 # ---------------------------------------------------------------- відхилення
@@ -163,7 +194,7 @@ async def cb_reject(
     AdminStates.reject_reason,
     F.text,
     ~F.text.startswith("/"),
-    ~F.text.in_({texts.BTN_CANCEL, texts.BTN_NEW_AD}),
+    ~F.text.in_({texts.BTN_CANCEL, texts.BTN_NEW_AD, texts.BTN_MY_ADS}),
 )
 async def reject_reason(message: Message, state: FSMContext, bot: Bot, db: Database) -> None:
     ad_id = (await state.get_data()).get("reject_ad_id")

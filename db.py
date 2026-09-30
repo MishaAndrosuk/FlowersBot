@@ -12,6 +12,7 @@ STATUS_AWAITING_PAYMENT = "awaiting_payment"
 STATUS_PENDING_REVIEW = "pending_review"
 STATUS_PUBLISHED = "published"
 STATUS_REJECTED = "rejected"
+STATUS_SOLD = "sold"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS ads (
@@ -32,9 +33,11 @@ CREATE TABLE IF NOT EXISTS ads (
     reject_reason      TEXT,
     channel_message_id INTEGER,
     created_at         TEXT    NOT NULL,
-    updated_at         TEXT    NOT NULL
+    updated_at         TEXT    NOT NULL,
+    sold_at            TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ads_status ON ads (status);
+CREATE INDEX IF NOT EXISTS idx_ads_user ON ads (user_id);
 
 CREATE TABLE IF NOT EXISTS moderation_messages (
     ad_id      INTEGER NOT NULL,
@@ -66,6 +69,7 @@ class Ad:
     channel_message_id: int | None
     created_at: str
     updated_at: str
+    sold_at: str | None = None
 
     @classmethod
     def from_row(cls, row: aiosqlite.Row) -> "Ad":
@@ -96,8 +100,17 @@ class Database:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.executescript(SCHEMA)
+        await self._migrate()
         await self._conn.commit()
         logger.info("База даних підключена: %s", self.path)
+
+    async def _migrate(self) -> None:
+        """Доводить схему вже існуючої бази до актуальної."""
+        async with self.conn.execute("PRAGMA table_info(ads)") as cursor:
+            columns = {row["name"] for row in await cursor.fetchall()}
+        if "sold_at" not in columns:
+            await self.conn.execute("ALTER TABLE ads ADD COLUMN sold_at TEXT")
+            logger.info("Міграція: додано колонку ads.sold_at")
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -156,6 +169,13 @@ class Database:
             rows = await cursor.fetchall()
         return [Ad.from_row(row) for row in rows]
 
+    async def list_user_ads(self, user_id: int, status: str) -> list[Ad]:
+        async with self.conn.execute(
+            "SELECT * FROM ads WHERE user_id = ? AND status = ? ORDER BY id DESC", (user_id, status)
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [Ad.from_row(row) for row in rows]
+
     async def set_receipt(self, ad_id: int, file_id: str, receipt_type: str) -> bool:
         cursor = await self.conn.execute(
             """
@@ -188,6 +208,19 @@ class Database:
              WHERE id = ? AND status = ?
             """,
             (STATUS_REJECTED, reason, _now(), ad_id, STATUS_PENDING_REVIEW),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def mark_sold(self, ad_id: int) -> bool:
+        now = _now()
+        cursor = await self.conn.execute(
+            """
+            UPDATE ads
+               SET status = ?, sold_at = ?, updated_at = ?
+             WHERE id = ? AND status = ?
+            """,
+            (STATUS_SOLD, now, now, ad_id, STATUS_PUBLISHED),
         )
         await self.conn.commit()
         return cursor.rowcount > 0
